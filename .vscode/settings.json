@@ -12,6 +12,12 @@
         "d"
     ],
     "Lua.diagnostics.disable": [
-        "redefined-local"
+        "redefined-local",
+        "deprecated",
+        "need-check-nil",
+        "param-type-mismatch",
+        "undefined-field",
+        "return-type-mismatch",
+        "redundant-parameter"
     ],
 }

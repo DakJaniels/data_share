@@ -120,22 +120,22 @@ function DL.unpackBits(bitString, bitLengths)
             local chunkSize = 16
             local remainingBits = bitLen
             local startPos = 1
-            
+
             while remainingBits > 0 do
                 local chunk = math.min(chunkSize, remainingBits)
                 local chunkBits = bits:sub(startPos, startPos + chunk - 1)
                 local chunkValue = 0
-                
+
                 -- Convert chunk to value
                 for j = 1, #chunkBits do
                     local bit = chunkBits:sub(j, j)
                     chunkValue = BitLShift(chunkValue, 1) + (bit == "1" and 1 or 0)
                 end
-                
+
                 -- Add to total with appropriate shift
                 local shift = remainingBits - chunk
                 num = BitOr(num, BitLShift(chunkValue, shift))
-                
+
                 startPos = startPos + chunk
                 remainingBits = remainingBits - chunk
             end
@@ -161,10 +161,10 @@ end
 function DL.encodeDirectly(num, digits)
     -- Ensure num is not negative
     if num < 0 then num = 0 end
-    
+
     -- Early return for zero with proper padding
-    if num == 0 then 
-        return string.rep(DL.SAFE_CHARS:sub(1, 1), digits) 
+    if num == 0 then
+        return string.rep(DL.SAFE_CHARS:sub(1, 1), digits)
     end
 
     local result = ""
@@ -181,12 +181,12 @@ function DL.encodeDirectly(num, digits)
     if #result < digits then
         result = string.rep(DL.SAFE_CHARS:sub(1, 1), digits - #result) .. result
     end
-    
+
     -- Ensure we don't exceed the requested digit count
     if #result > digits then
         -- This should not happen with normal usage, but just in case
-        d("Warning: Encoded string length (" .. #result .. 
-          ") exceeds requested digits (" .. digits .. ")")
+        d("Warning: Encoded string length (" .. #result ..
+            ") exceeds requested digits (" .. digits .. ")")
         result = result:sub(#result - digits + 1)
     end
 
@@ -218,12 +218,12 @@ end
 function DL.encodeLargeNumbers(data, bitLengths)
     local result = ""
     d("Using direct encoding for large numbers (" .. #data .. " values)")
-    
+
     -- Calculate exact character lengths needed for each bit length type
     local charLengthsByBitLength = {}
     local uniqueBitLengths = {}
     local countByBitLength = {}
-    
+
     -- First, identify all unique bit lengths and their counts
     for _, bits in ipairs(bitLengths) do
         if not countByBitLength[bits] then
@@ -233,34 +233,32 @@ function DL.encodeLargeNumbers(data, bitLengths)
             countByBitLength[bits] = countByBitLength[bits] + 1
         end
     end
-    
+
     -- Sort to ensure consistent traversal order
     table.sort(uniqueBitLengths)
-    
+
     -- Calculate character lengths needed for each bit length
     for _, bits in ipairs(uniqueBitLengths) do
         -- Fixed calculation: How many chars we need for this bit length
         local exactChars = math.ceil(bits / math.log(DL.BASE, 2))
         charLengthsByBitLength[bits] = exactChars
-        d(string.format("  Bit length %d needs %d chars (for %d values)", 
-            bits, exactChars, countByBitLength[bits]))
+        d(string.format("  Bit length %d needs %d chars (for %d values)", bits, exactChars, countByBitLength[bits]))
     end
-    
+
     -- Store this for the decoder to know the encoding format
     DL._lastEncodingWidths = charLengthsByBitLength
-    
+
     -- Now encode each value with the appropriate fixed width
     for i, num in ipairs(data) do
         local bits = bitLengths[i]
         local chars = charLengthsByBitLength[bits]
-        
+
         local encoded = DL.encodeDirectly(num, chars)
         result = result .. encoded
-        
+
         -- Log a sample of values
         if i <= 3 or i >= #data - 2 then
-            d(string.format("  Encoded value %d: %d (bits: %d) -> %s (%d chars)", 
-                i, num, bits, encoded, #encoded))
+            d(string.format("  Encoded value %d: %d (bits: %d) -> %s (%d chars)", i, num, bits, encoded, #encoded))
         elseif i == 4 then
             d("  ... (omitting middle values) ...")
         end
@@ -271,7 +269,7 @@ function DL.encodeLargeNumbers(data, bitLengths)
     for _, bits in ipairs(uniqueBitLengths) do
         encodingInfo = encodingInfo .. string.format("-%d:%d", bits, charLengthsByBitLength[bits])
     end
-    
+
     d("Direct encoding complete: result length = " .. #result)
     -- Return the encoded string with encoding info at the start
     return encodingInfo .. ":" .. result
@@ -287,9 +285,9 @@ function DL.decodeLargeNumbers(str, bitLengths)
         d("Not an enhanced format string, using legacy decoder")
         return DL._decodeLargeNumbersLegacy(str, bitLengths)
     end
-    
+
     d("Decoding enhanced format string: " .. str:sub(1, math.min(40, #str)) .. "...")
-    
+
     -- Find the position of the data separator (the last colon)
     local lastColonPos = 0
     local searchPos = 1
@@ -299,43 +297,43 @@ function DL.decodeLargeNumbers(str, bitLengths)
         lastColonPos = nextColon
         searchPos = nextColon + 1
     end
-    
+
     if lastColonPos == 0 then
         d("No data separator found in the enhanced format string")
         return nil
     end
-    
+
     -- Extract metadata and actual data
     local metadata = str:sub(1, lastColonPos - 1)
     local dataStr = str:sub(lastColonPos + 1)
-    
+
     d("Metadata: " .. metadata)
     d("Data length: " .. #dataStr)
-    
+
     -- Parse the count from metadata (format E56-8:2-12:3-16:4)
     local count = tonumber(metadata:match("^E(%d+)"))
     if not count then
         d("No count found in metadata")
         return nil
     end
-    
+
     -- Check if count matches expected values
     if count ~= #bitLengths then
         d("Count mismatch: metadata says " .. count .. " values but received " .. #bitLengths .. " bit lengths")
     end
-    
+
     -- Extract bit length to character mappings from metadata
     local charLengthsByBitLength = {}
     for bitLength, charLength in metadata:gmatch("-(%d+):(%d+)") do
         local bitLengthNum = tonumber(bitLength)
         local charLengthNum = tonumber(charLength)
-        
+
         if bitLengthNum and charLengthNum then
             charLengthsByBitLength[bitLengthNum] = charLengthNum
             d(string.format("  Mapping: %d bits uses %d chars", bitLengthNum, charLengthNum))
         end
     end
-    
+
     -- Verify we have mappings for all required bit lengths
     local missingMappings = false
     for _, bits in ipairs(bitLengths) do
@@ -347,44 +345,43 @@ function DL.decodeLargeNumbers(str, bitLengths)
             d("  Using fallback: " .. bits .. " bits uses " .. charLengthsByBitLength[bits] .. " chars")
         end
     end
-    
+
     if missingMappings then
         d("Warning: Some bit lengths were missing from metadata, using calculated fallbacks")
     end
-    
+
     -- Now decode the actual data
     local result = {}
     local pos = 1
-    
+
     for i, bits in ipairs(bitLengths) do
         local chars = charLengthsByBitLength[bits]
-        
+
         -- Check if we have enough data left
         if pos + chars - 1 > #dataStr then
-            d("Data string too short: need position " .. (pos + chars - 1) .. 
-              " but data string length is only " .. #dataStr)
+            d("Data string too short: need position " .. (pos + chars - 1) .. " but data string length is only " .. #dataStr)
             return nil
         end
-        
+
         -- Extract and decode the chunk
         local chunk = dataStr:sub(pos, pos + chars - 1)
         local value = DL.decodeDirectly(chunk)
-        
+
         -- Store the result
         result[i] = value
-        
+
         -- Log some samples
         if i <= 3 or i >= #bitLengths - 2 then
-            d(string.format("  Value %d: %s (%d chars) -> %d (bits: %d)", 
+            d(string.format("  Value %d: %s (%d chars) -> %d (bits: %d)",
                 i, chunk, #chunk, value or 0, bits))
         elseif i == 4 then
             d("  ... (omitting middle values) ...")
         end
-        
+
         -- Move to next position
         pos = pos + chars
     end
-    
+
     d("Successfully decoded " .. #result .. " values")
     return result
 end
@@ -394,7 +391,7 @@ function DL._decodeLargeNumbersLegacy(str, bitLengths)
     d("Using legacy decoder as fallback")
     local result = {}
     local pos = 1
-    
+
     -- Calculate character lengths just as in the old encoder
     local charLengthsByBitLength = {}
     for _, bits in ipairs(bitLengths) do
@@ -402,29 +399,29 @@ function DL._decodeLargeNumbersLegacy(str, bitLengths)
             charLengthsByBitLength[bits] = math.ceil(bits / math.log(DL.BASE, 2))
         end
     end
-    
+
     -- Now decode each value
     for i, bits in ipairs(bitLengths) do
         local chars = charLengthsByBitLength[bits]
-        
+
         if pos + chars - 1 > #str then
-            d("String too short: need position " .. (pos + chars - 1) .. 
-              " but string length is only " .. #str)
+            d("String too short: need position " .. (pos + chars - 1) ..
+                " but string length is only " .. #str)
             return nil
         end
-        
+
         local chunk = str:sub(pos, pos + chars - 1)
         local value = DL.decodeDirectly(chunk)
         result[i] = value
-        
+
         if i <= 3 then
-            d(string.format("  Legacy decoded %d: %s (%d chars) -> %d (bits: %d)", 
+            d(string.format("  Legacy decoded %d: %s (%d chars) -> %d (bits: %d)",
                 i, chunk, #chars, value, bits))
         end
-        
+
         pos = pos + chars
     end
-    
+
     return result
 end
 
@@ -489,14 +486,14 @@ function DL.decodeToBits(str, bitLength)
 
     -- Enhanced decoding for large bit strings
     local bits = ""
-    
+
     -- For larger bit lengths, we need to handle the number in chunks
     if bitLength > 50 then
         -- Use direct binary representation for extremely long bit sequences
         -- rather than going through a single large number which could lose precision
         -- First, decode the string to get the full number
         local fullNum = num
-        
+
         -- Convert to binary representation with proper length
         for i = 1, bitLength do
             -- Extract bits from right to left (least to most significant)
@@ -510,11 +507,11 @@ function DL.decodeToBits(str, bitLength)
             bits = (num % 2 == 1 and "1" or "0") .. bits
             num = math.floor(num / 2)
         end
-        
+
         -- Pad with leading zeros to reach desired bit length
         bits = string.rep("0", bitLength - #bits) .. bits
     end
-    
+
     -- Ensure we have exactly the right length
     if #bits ~= bitLength then
         -- If there's a mismatch in length, adjust by either truncating or padding
@@ -526,7 +523,7 @@ function DL.decodeToBits(str, bitLength)
             bits = string.rep("0", bitLength - #bits) .. bits
         end
     end
-    
+
     return bits
 end
 
@@ -541,7 +538,7 @@ end
 function DL.encode(data, bitLengths)
     -- Check if we're dealing with gear data or other large data
     local isGearData = #data > 50 or #bitLengths > 50
-    
+
     if isGearData then
         d("Detected gear data, using special encoding format")
         return DL.encodeLargeNumbers(data, bitLengths)
@@ -588,7 +585,7 @@ function DL.decode(str, bitLengths)
             hasLargeBitLengths = true
         end
     end
-    
+
     -- If we have a very large total bit length or any individual large bit lengths,
     -- use the direct decoding method as it's more reliable for large datasets
     if totalBits > 500 or hasLargeBitLengths or #bitLengths > 50 then
@@ -597,16 +594,16 @@ function DL.decode(str, bitLengths)
     else
         -- For smaller datasets, try bit-based decoding first
         d("Using bit-based decoding for smaller data set")
-        
+
         -- Convert the encoded string to binary bits
         local bitString = DL.decodeToBits(str, totalBits)
-        
+
         -- If bit string conversion fails, fall back to direct decoding
         if not bitString then
             d("Bit-based decoding failed, falling back to direct decoding")
             return DL.decodeLargeNumbers(str, bitLengths)
         end
-        
+
         -- Ensure the bit string has the correct length
         if #bitString ~= totalBits then
             d("Bit string length mismatch: expected " .. totalBits .. ", got " .. #bitString)
@@ -619,16 +616,16 @@ function DL.decode(str, bitLengths)
                 bitString = bitString:sub(#bitString - totalBits + 1)
             end
         end
-        
+
         -- Unpack the binary bits into the values
         local result = DL.unpackBits(bitString, bitLengths)
-        
+
         -- If unpacking fails, fall back to direct decoding
         if not result then
             d("Unpacking bits failed, falling back to direct decoding")
             return DL.decodeLargeNumbers(str, bitLengths)
         end
-        
+
         return result
     end
 end
