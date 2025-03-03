@@ -9,13 +9,6 @@
 --- @dependency DataLink
 --- @dependency LibChatMessage
 
--- DataLinkExample.lua
---
--- An ESO addon showing how to use DataLink for efficient data compression
--- that avoids profanity filter issues
---
--- Author: @dack_janiels
-
 local ADDON_NAME = "DataLinkExample"
 
 -- Define our custom link type
@@ -215,13 +208,26 @@ function DataLinkExample.RunTests()
     }
 
     for i, values in ipairs(testValues) do
-        local encoded = DataLink.encode(values, bitLengths[i])
-        local decoded = DataLink.decode(encoded, bitLengths[i])
-
         d(string.format("Test %d:", i))
         d("Original: " .. table.concat(values, ", "))
+
+        -- Show bit requirements for each number
+        local bitsRequired = {}
+        for j, value in ipairs(values) do
+            local bits = DataLink.bitsRequired(value)
+            table.insert(bitsRequired, bits)
+        end
+        d("Bits required: " .. table.concat(bitsRequired, ", "))
+        d("Bits allocated: " .. table.concat(bitLengths[i], ", "))
+
+        -- Perform encoding
+        local encoded = DataLink.encode(values, bitLengths[i])
         d("Encoded: " .. encoded .. " (length: " .. #encoded .. ")")
 
+        -- Perform decoding
+        local decoded = DataLink.decode(encoded, bitLengths[i])
+
+        -- Verify results
         local success = true
         for j, value in ipairs(values) do
             if decoded[j] ~= value then
@@ -233,6 +239,8 @@ function DataLinkExample.RunTests()
         if success then
             d("Decoded successfully!")
         end
+
+        d("") -- Empty line for readability
     end
 
     -- Compare size with simple concatenation

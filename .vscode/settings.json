@@ -1,0 +1,17 @@
+{
+    "Lua.runtime.builtin": {
+        "bit32": "enable",
+        "bit": "enable"
+    },
+    "Lua.workspace.library": [
+        "C:/Users/dack_janiels/Desktop/eso_dumped_data",
+        "C:/Users/dack_janiels/source/repos/meta/esoui_101045",
+        "C:/Users/dack_janiels/source/repos/meta/addon_lib_docs/LibChatMessageAPI.lua",
+    ],
+    "Lua.diagnostics.globals": [
+        "d"
+    ],
+    "Lua.diagnostics.disable": [
+        "redefined-local"
+    ],
+}
