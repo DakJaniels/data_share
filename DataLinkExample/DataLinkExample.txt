@@ -1,0 +1,10 @@
+## Title: DataLinkExample
+## Description: Example of using DataLink for efficient data compression in ESO addons
+## Version: 1.0.0
+## AddOnVersion: 1
+## APIVersion: 101044 101045
+## Author: @dack_janiels
+## SavedVariables: DataLinkExampleSavedVars
+## DependsOn: DataLink
+
+DataLinkExample.lua 
