@@ -13,6 +13,7 @@ DataLink solves a specific problem in ESO addons: efficiently encoding numerical
 - Schema-based encoding/decoding for common data types
 - Works with ESO's Lua 5.1 environment
 - Fully annotated for LuaLS (Lua Language Server) support
+- Properly integrates with ESO's link handling system
 
 ## Installation
 
@@ -66,16 +67,51 @@ local decodedBuild = buildSchema.decode(encodedBuild)
 
 ### Clickable In-Game Links
 
-To create clickable in-game links that transmit data:
+To create clickable in-game links, you need both LibChatMessage and ESO's link handler system:
 
 ```lua
-local function createLink(linkType, data)
-    return string.format("|H1:DataLink:%s:%s|h[Click me]|h", linkType, data)
+-- Add LibChatMessage as a dependency in your manifest:
+-- ## DependsOn: LibChatMessage>=40
+
+-- Initialize LibChatMessage
+local LCM = LibChatMessage
+
+-- Define your custom link type
+local MY_LINK_TYPE = "MyAddonLink"
+
+-- Register your custom link type with LibChatMessage
+LCM:RegisterCustomChatLink(MY_LINK_TYPE)
+
+-- Create a link with subtype and data
+function CreateMyLink(subType, data)
+    local displayText = "Click me: " .. subType
+    return ZO_LinkHandler_CreateLink(displayText, nil, MY_LINK_TYPE, subType, data)
 end
 
--- Register a handler for your links
-LINK_HANDLER:RegisterCallback(LINK_HANDLER.LINK_MOUSE_UP_EVENT, YourLinkHandler, "DataLink")
+-- Handle link clicks - note the parameter order:
+-- linkData, mouseButton, linkText, color, linkType, ...
+function MyLinkHandler(linkData, mouseButton, linkText, color, linkType, ...)
+    -- Only handle our custom link type
+    if linkType ~= MY_LINK_TYPE then return false end
+    
+    -- Process the link data (additional parameters after linkType)
+    local subType, encodedData = ...
+    
+    -- Handle the link click
+    -- ...
+    
+    -- Return true to indicate we handled this link
+    return true
+end
+
+-- Register the handler for link clicks
+LINK_HANDLER:RegisterCallback(LINK_HANDLER.LINK_MOUSE_UP_EVENT, MyLinkHandler)
+
+-- Insert a link into the chat box
+StartChatInput(ZO_LinkHandler_InsertLink(CreateMyLink("item", "someEncodedData")))
 ```
+
+**Important:** Always ensure your link handler callback returns `true` to indicate the link was handled properly. This prevents ESO from attempting to display a tooltip for your custom link type, which would otherwise result in errors.
 
 ## Technical Details
 

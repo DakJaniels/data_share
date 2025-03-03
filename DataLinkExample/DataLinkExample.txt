@@ -5,6 +5,6 @@
 ## APIVersion: 101044 101045
 ## Author: @dack_janiels
 ## SavedVariables: DataLinkExampleSavedVars
-## DependsOn: DataLink
+## DependsOn: DataLink>=1 LibChatMessage>=113
 
 DataLinkExample.lua 

@@ -7,6 +7,7 @@
 --- @author @dack_janiels
 --- @version 1.0
 --- @dependency DataLink
+--- @dependency LibChatMessage
 
 -- DataLinkExample.lua
 --
@@ -16,6 +17,12 @@
 -- Author: @dack_janiels
 
 local ADDON_NAME = "DataLinkExample"
+
+-- Define our custom link type
+local DATALINK_LINK_TYPE = "DataLink"
+
+-- Initialize LibChatMessage
+local LCM = LibChatMessage
 
 -- Initialize our addon namespace
 DataLinkExample = {}
@@ -52,37 +59,53 @@ function DataLinkExample.Initialize()
     SLASH_COMMANDS["/dltest"] = DataLinkExample.RunTests
     SLASH_COMMANDS["/dllink"] = DataLinkExample.CreateExampleLink
 
+    -- Register our custom link type with LibChatMessage
+    LCM:RegisterCustomChatLink(DATALINK_LINK_TYPE)
+
     d("[DataLinkExample] Initialized. Type /dltest to run tests or /dllink to create an example character build link.")
 end
 
---- Generates a link that can be clicked in chat
---- @param linkType string The type of link (e.g., "build", "mappin")
+--- Generates a link that can be clicked in chat using ESO's link handler API
+--- @param linkSubType string The subtype of link (e.g., "build", "mappin")
 --- @param linkData string The encoded data for the link
---- @return string @The formatted chat link
-function DataLinkExample.GenerateLink(linkType, linkData)
-    -- Encode the link data as a |H...|h[text]|h link
-    -- This uses ZOS's link format: |H<linkType>:<linkData>|h[<displayText>]|h
-    return string.format("|H1:DataLink:%s:%s|h[%s]|h", linkType, linkData, "Click to view " .. linkType)
+--- @return string The formatted chat link
+function DataLinkExample.GenerateLink(linkSubType, linkData)
+    -- Create display text
+    local displayText = "Click to view " .. linkSubType
+
+    -- Use ZO_LinkHandler_CreateLink to create a properly formatted ESO chat link
+    -- Format: ZO_LinkHandler_CreateLink(text, color, linkType, ...)
+    -- where ... is additional data passed to the link handler
+    return ZO_LinkHandler_CreateLink(displayText, nil, DATALINK_LINK_TYPE, linkSubType, linkData)
 end
 
 --- Handler for link clicks
---- @param linkData string The data from the clicked link
---- @param button number The mouse button used for the click
-function DataLinkExample.LinkHandler(linkData, button)
-    -- Format: linkType:encodedData
-    local linkType, encodedData = string.match(linkData, "^([^:]+):(.+)$")
-
-    if not linkType or not encodedData then
-        d("[DataLinkExample] Invalid link format")
-        return
+--- Used with LINK_HANDLER:RegisterCallback
+--- @param linkData string The raw link data
+--- @param mouseButton number The mouse button used for the click
+--- @param linkText string The text displayed in the link
+--- @param color string|nil The link color
+--- @param linkType string The link type (should be "DataLink")
+--- @param linkSubType string The link subtype (e.g., "build", "mappin")
+--- @param encodedData string The encoded data included in the link
+--- @return boolean Returns true if the link was handled, false otherwise
+function DataLinkExample.LinkHandler(linkData, mouseButton, linkText, color, linkType, linkSubType, encodedData)
+    -- Only handle our custom link type
+    if linkType ~= DATALINK_LINK_TYPE then
+        return false
     end
 
-    if linkType == "build" then
+    if not linkSubType or not encodedData then
+        d("[DataLinkExample] Invalid link format")
+        return true -- Still return true to prevent errors
+    end
+
+    if linkSubType == "build" then
         -- Decode character build data
         local build = DataLinkExample.BuildSchema.decode(encodedData)
         if not build then
             d("[DataLinkExample] Failed to decode build data")
-            return
+            return true -- Still return true to prevent errors
         end
 
         -- Display the decoded build information
@@ -95,12 +118,15 @@ function DataLinkExample.LinkHandler(linkData, button)
         d(string.format("Weapon: %d", build.weaponType))
         d(string.format("Armor: %d", build.armorType))
         d(string.format("CP Level: %d", build.cpLevel))
-    elseif linkType == "mappin" then
+
+        -- Return true to indicate we handled this link
+        return true
+    elseif linkSubType == "mappin" then
         -- Decode map pin data
         local pin = DataLinkExample.MapPinSchema.decode(encodedData)
         if not pin then
             d("[DataLinkExample] Failed to decode map pin data")
-            return
+            return true -- Still return true to prevent errors
         end
 
         -- Display the decoded map pin information
@@ -113,8 +139,12 @@ function DataLinkExample.LinkHandler(linkData, button)
 
         -- You could also add the pin to the map here
         -- AddCustomPin(pin.pinType, pin.subType, pin.zoneId, pin.x/1000, pin.y/1000)
+
+        -- Return true to indicate we handled this link
+        return true
     else
-        d("[DataLinkExample] Unknown link type: " .. linkType)
+        d("[DataLinkExample] Unknown link type: " .. linkSubType)
+        return true -- Still return true to prevent errors
     end
 end
 
@@ -156,8 +186,9 @@ function DataLinkExample.CreateExampleLink()
     d("Example map pin link: " .. mapPinLink)
     d("Click these links to decode and display the data!")
 
-    -- Copy to chat input to make it easy to share with others
-    StartChatInput(buildLink)
+    -- Insert the link into the chat box for easy sharing
+    -- This is more reliable than directly setting the text
+    StartChatInput(ZO_LinkHandler_InsertLink(buildLink))
 end
 
 --- Run various tests of the DataLink library
@@ -232,8 +263,8 @@ end
 function DataLinkExample.OnAddOnLoaded(event, addonName)
     if addonName ~= ADDON_NAME then return end
 
-    -- Register for link handler events
-    LINK_HANDLER:RegisterCallback(LINK_HANDLER.LINK_MOUSE_UP_EVENT, DataLinkExample.LinkHandler, "DataLink")
+    -- Register for link handler events with our simpler handler function
+    LINK_HANDLER:RegisterCallback(LINK_HANDLER.LINK_MOUSE_UP_EVENT, DataLinkExample.LinkHandler)
 
     -- Initialize the addon
     DataLinkExample.Initialize()
@@ -241,5 +272,3 @@ end
 
 -- Register for the addon loaded event
 EVENT_MANAGER:RegisterForEvent(ADDON_NAME, EVENT_ADD_ON_LOADED, DataLinkExample.OnAddOnLoaded)
-
-return DataLinkExample
