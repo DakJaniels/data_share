@@ -17,10 +17,10 @@ DataLink solves a specific problem in ESO addons: efficiently encoding numerical
 ## Installation
 
 1. Copy the DataLink folder to your AddOns directory
-2. Add DataLink as a dependency in your addon's manifest file (`YourAddon.txt`):
+2. Add DataLink as a dependency in your addon's manifest file, with version check (`YourAddon.txt`):
 
 ```txt
-## DependsOn: DataLink
+## DependsOn: DataLink>=1
 ```
 
 ## Usage
