@@ -476,6 +476,18 @@ function DL.encodeBits(bitString)
     return DL.encodeInt(num)
 end
 
+local function decimalToBinaryString(decimal, bitLength)
+    local bits = ''
+
+    while decimal > 0 do
+        bits = (decimal % 2 == 1 and "1" or "0") .. bits
+        decimal = math.floor(decimal / 2)
+    end
+
+    -- Pad with leading zeros to reach desired bit length
+    return string.rep("0", bitLength - #bits) .. bits
+end
+
 --- Decodes a string back to binary format with specified length.
 --- @param str string The string to decode
 --- @param bitLength integer The expected bit length for padding
@@ -503,13 +515,7 @@ function DL.decodeToBits(str, bitLength)
         end
     else
         -- Original approach for smaller bit lengths
-        while num > 0 do
-            bits = (num % 2 == 1 and "1" or "0") .. bits
-            num = math.floor(num / 2)
-        end
-
-        -- Pad with leading zeros to reach desired bit length
-        bits = string.rep("0", bitLength - #bits) .. bits
+        bits = decimalToBinaryString(num, bitLength)
     end
 
     -- Ensure we have exactly the right length
@@ -927,6 +933,109 @@ function DL.createSchema(schema)
 end
 
 -------------------------------------------------
+-- Schema
+-------------------------------------------------
+
+local EMPTY = 0
+local NUMERIC = 1
+local TABLE = 2
+local ARRAY = 3
+
+Field = {}
+Field.__index = Field
+
+function Field:New(name, fieldType)
+    local self = setmetatable({}, Field)
+
+    self.name = name
+    self.fieldType = fieldType
+
+    return self
+end
+
+-- ----------------------------------------------------------------------------
+
+Numeric = setmetatable({}, {__index = Field})
+Numeric.__index = Numeric
+
+function Numeric:New(name, bitLength)
+    local self = setmetatable(Field:New(name, NUMERIC), Numeric)
+
+    self.bitLength = bitLength
+
+    return self
+end
+
+function Numeric:Handle(data)
+    if type(data) ~= 'number' then
+        error('Value must be a number')
+    end
+
+    local result = decimalToBinaryString(data, self.bitLength)
+
+    if #result > self.bitLength then
+        error('Value is outside of upper bound')
+    end
+
+    return result
+end
+
+-- ----------------------------------------------------------------------------
+
+Array = setmetatable({}, {__index = Field})
+Array.__index = Array
+
+function Array:New(name, length, subtype)
+    local self = setmetatable(Field:New(name, ARRAY), Array)
+
+    self.length = length
+    self.subType = subtype
+
+    return self
+end
+
+function Array:Handle(data)
+    local result = ''
+
+    if type(data) ~= 'table' then
+        error('Value must be a table')
+    end
+
+    for _, datum in ipairs(data) do
+        result = result .. self.subType:Handle(datum)
+    end
+
+    return result
+end
+
+-- ----------------------------------------------------------------------------
+
+Table = setmetatable({}, {__index = Table})
+Table.__index = Table
+
+function Table:New(name, fields)
+    local self = setmetatable(Field:New(name, TABLE), Table)
+
+    self.fields = fields
+
+    return self
+end
+
+function Table:Handle(data)
+    local result = ''
+
+    if type(data) ~= 'table' then
+        error('Value must be a table')
+    end
+
+    for i, field in ipairs(self.fields) do
+        result = result .. field:Handle(data[i])
+    end
+
+    return result
+end
+
+-------------------------------------------------
 -- Test Functions
 -------------------------------------------------
 
@@ -994,6 +1103,33 @@ function DL.createGearSchema()
     d("Creating gear schema...")
 
     return DL.createSchema(schema)
+end
+
+-- Example of schema
+function DL.createGearSchema_v2()
+    local gearPiece = Table:New('gearPiece', {
+        Numeric:New('id',       16),
+        Numeric:New('glyph',    8),
+        Numeric:New('param1',   12),
+        Numeric:New('param2',   12),
+    })
+
+    -- it can be rewritten in nested format, but I like to separate this kind of things for clarity
+    local build = Array:New('build', 2, gearPiece)
+
+    -- after it, schema (build) can be used to encode data
+
+    local testBuild = {
+        {15535, 100, 1000, 1000},
+        {25535, 200, 2000, 2000},
+    }
+
+    local encodedString = build:Handle(testBuild)
+
+    d('Encoded string: ')
+    d(encodedString)
+
+    return encodedString
 end
 
 -- Return the library as a global
