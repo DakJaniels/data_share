@@ -9,7 +9,8 @@
         "C:/Users/dack_janiels/source/repos/meta/addon_lib_docs/LibChatMessageAPI.lua",
     ],
     "Lua.diagnostics.globals": [
-        "d"
+        "d",
+        "printTable"
     ],
     "Lua.diagnostics.disable": [
         "redefined-local",

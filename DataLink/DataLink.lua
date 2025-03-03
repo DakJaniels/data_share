@@ -12,7 +12,12 @@
 -- A library for efficient data compression avoiding profanity filter issues
 -- Author: @dack_janiels
 -- Version: 1.0
+
 --- @class DataLink
+--- @field version number The library version
+--- @field SAFE_CHARS string Safe character set used for encoding
+--- @field BASE integer The base size used for encoding (length of SAFE_CHARS)
+--- @field CHAR_TO_INDEX table<string, integer> Maps each character to its index in the safe chars string
 DataLink = {}
 
 --- @class DataLink
@@ -96,6 +101,34 @@ function DL.packBits(data, bitLengths)
     return bitString
 end
 
+--- Converts a decimal number to a binary string of specified length.
+--- @param decimal integer The decimal number to convert
+--- @param bitLength integer The desired length of the binary string
+--- @return string The binary string representation with leading zeros
+local function decimalToBinaryString(decimal, bitLength)
+    local bits = ""
+
+    while decimal > 0 do
+        bits = (decimal % 2 == 1 and "1" or "0") .. bits
+        decimal = math.floor(decimal / 2)
+    end
+
+    -- Pad with leading zeros to reach desired bit length
+    return string.rep("0", bitLength - #bits) .. bits
+end
+
+--- Converts a binary string to a decimal number.
+--- @param bits string The binary string to convert
+--- @return integer The resulting decimal number
+local function binaryToNumber(bits)
+    local num = 0
+    for i = 1, #bits do
+        local bit = bits:sub(i, i)
+        num = num * 2 + (bit == "1" and 1 or 0)
+    end
+    return num
+end
+
 --- Unpack a bit string into a table of numbers according to specified bit lengths.
 --- @param bitString string The bit string to unpack
 --- @param bitLengths integer[] Table of bit lengths for each number
@@ -124,13 +157,9 @@ function DL.unpackBits(bitString, bitLengths)
             while remainingBits > 0 do
                 local chunk = math.min(chunkSize, remainingBits)
                 local chunkBits = bits:sub(startPos, startPos + chunk - 1)
-                local chunkValue = 0
 
-                -- Convert chunk to value
-                for j = 1, #chunkBits do
-                    local bit = chunkBits:sub(j, j)
-                    chunkValue = BitLShift(chunkValue, 1) + (bit == "1" and 1 or 0)
-                end
+                -- Convert chunk to value using our helper function
+                local chunkValue = binaryToNumber(chunkBits)
 
                 -- Add to total with appropriate shift
                 local shift = remainingBits - chunk
@@ -140,15 +169,20 @@ function DL.unpackBits(bitString, bitLengths)
                 remainingBits = remainingBits - chunk
             end
         else
-            -- Original approach for smaller bit lengths
-            for j = 1, #bits do
-                local bit = bits:sub(j, j)
-                num = BitLShift(num, 1) + (bit == "1" and 1 or 0)
-            end
+            -- For smaller bit lengths, use our helper function
+            num = binaryToNumber(bits)
         end
 
         data[i] = num
         pos = pos + bitLen
+
+        -- Debug output for first few values for troubleshooting
+        if i <= 5 or i >= #bitLengths - 2 then
+            d(string.format("Unpacked value %d: %s (%d bits) -> %d",
+                i, bits, #bits, num))
+        elseif i == 6 then
+            d("... (more values) ...")
+        end
     end
 
     return data
@@ -195,7 +229,7 @@ end
 
 --- Decodes a directly encoded large integer.
 --- @param str string The encoded string
---- @return integer The decoded large integer
+--- @return integer|nil The decoded large integer, or nil if the string contains invalid characters
 function DL.decodeDirectly(str)
     local num = 0
     local base = DL.BASE
@@ -214,7 +248,7 @@ end
 --- Encodes large numbers using a simpler fixed-width approach for perfect alignment.
 --- @param data integer[] Array of integers
 --- @param bitLengths integer[] Bit lengths for each number
---- @return string The encoded string
+--- @return string The encoded string with metadata
 function DL.encodeLargeNumbers(data, bitLengths)
     local result = ""
     d("Using direct encoding for large numbers (" .. #data .. " values)")
@@ -278,7 +312,7 @@ end
 --- Decodes a string of large numbers using the encoding information for perfect alignment.
 --- @param str string The encoded string
 --- @param bitLengths integer[] Bit lengths for each number
---- @return integer[] Array of decoded integers
+--- @return integer[]|nil Array of decoded integers, or nil if the string format is invalid
 function DL.decodeLargeNumbers(str, bitLengths)
     -- Check if the string starts with "E" which indicates enhanced format
     if str:sub(1, 1) ~= "E" then
@@ -386,7 +420,10 @@ function DL.decodeLargeNumbers(str, bitLengths)
     return result
 end
 
--- Legacy decoder (kept for backward compatibility)
+--- Legacy decoder (kept for backward compatibility)
+--- @param str string The encoded string
+--- @param bitLengths integer[] Bit lengths for each number
+--- @return integer[]|nil Array of decoded integers, or nil if the string format is invalid
 function DL._decodeLargeNumbersLegacy(str, bitLengths)
     d("Using legacy decoder as fallback")
     local result = {}
@@ -427,7 +464,7 @@ end
 
 --- Encodes an integer into our custom base.
 --- @param num integer The number to encode
---- @return string @The encoded string
+--- @return string The encoded string
 function DL.encodeInt(num)
     if num == 0 then return DL.SAFE_CHARS:sub(1, 1) end
 
@@ -443,16 +480,26 @@ end
 
 --- Decodes a custom base string back to an integer.
 --- @param str string The string to decode
---- @return integer|nil @The decoded number, or nil if the string contains invalid characters
+--- @return integer|nil The decoded number, or nil if the string contains invalid characters
 function DL.decodeInt(str)
     local num = 0
+    local base = DL.BASE
+
     for i = 1, #str do
         local char = str:sub(i, i)
         local value = DL.CHAR_TO_INDEX[char]
         if value == nil then
+            d("Invalid character encountered in decodeInt: '" .. char .. "'")
             return nil -- Invalid character encountered
         end
-        num = num * DL.BASE + value
+
+        -- Multiply previous result by base and add the new digit
+        num = num * base + value
+
+        -- For debugging in the SimpleGearTest case
+        if #str <= 20 then
+            d("Decode step " .. i .. ": char '" .. char .. "' value " .. value .. " running total " .. num)
+        end
     end
 
     return num
@@ -460,81 +507,125 @@ end
 
 --- Encodes a binary string (sequence of bits) using our custom base.
 --- @param bitString string A string of "0" and "1" characters
---- @return string|nil @The encoded string, or nil if the bitString contains invalid characters
+--- @return string|nil The encoded string, or nil if the bitString contains invalid characters
 function DL.encodeBits(bitString)
+    -- For debugging in the SimpleGearTest case
+    if #bitString < 100 then
+        d("Encoding bit string: " .. bitString)
+    else
+        d("Encoding bit string (first 50 chars): " .. bitString:sub(1, 50) .. "...")
+    end
+
     -- First convert the binary string to a number
     local num = 0
     for i = 1, #bitString do
         local bit = bitString:sub(i, i)
         if bit ~= "0" and bit ~= "1" then
+            d("Invalid character in bit string: '" .. bit .. "'")
             return nil -- Invalid bit string
         end
         num = num * 2 + (bit == "1" and 1 or 0)
     end
 
+    -- For debugging in the SimpleGearTest case
+    if #bitString < 100 then
+        d("Converted to decimal: " .. num)
+    end
+
     -- Then encode that number
-    return DL.encodeInt(num)
+    local result = DL.encodeInt(num)
+
+    -- For debugging in the SimpleGearTest case
+    if #bitString < 100 then
+        d("Encoded result: " .. result)
+    end
+
+    return result
 end
 
 --- Decodes a string back to binary format with specified length.
 --- @param str string The string to decode
 --- @param bitLength integer The expected bit length for padding
---- @return string|nil @The binary string, or nil if the string contains invalid characters
+--- @return string|nil The binary string, or nil if the string contains invalid characters
 function DL.decodeToBits(str, bitLength)
-    local num = DL.decodeInt(str)
-    if not num then return nil end
+    d("Decoding string of length " .. #str .. " to " .. bitLength .. " bits")
 
-    -- Enhanced decoding for large bit strings
-    local bits = ""
+    -- We'll decode the string chunk by chunk, 2 characters at a time
+    -- which is roughly 12-13 bits per chunk (for our base of 70+ chars)
+    local bitString = ""
+    local chunkSize = 2 -- Process 2 characters at a time to avoid large number precision issues
 
-    -- For larger bit lengths, we need to handle the number in chunks
-    if bitLength > 50 then
-        -- Use direct binary representation for extremely long bit sequences
-        -- rather than going through a single large number which could lose precision
-        -- First, decode the string to get the full number
-        local fullNum = num
+    for i = 1, #str, chunkSize do
+        -- Get the next chunk (or remaining chars if less than chunkSize)
+        local endPos = math.min(i + chunkSize - 1, #str)
+        local chunk = str:sub(i, endPos)
 
-        -- Convert to binary representation with proper length
-        for i = 1, bitLength do
-            -- Extract bits from right to left (least to most significant)
-            local bitPosition = bitLength - i
-            local bitValue = BitRShift(fullNum, bitPosition) % 2
-            bits = bits .. (bitValue == 1 and "1" or "0")
-        end
-    else
-        -- Original approach for smaller bit lengths
-        while num > 0 do
-            bits = (num % 2 == 1 and "1" or "0") .. bits
-            num = math.floor(num / 2)
+        -- Decode just this chunk to a manageable number
+        local chunkValue = 0
+        for j = 1, #chunk do
+            local char = chunk:sub(j, j)
+            local value = DL.CHAR_TO_INDEX[char]
+            if value == nil then
+                d("Invalid character in chunk: '" .. char .. "'")
+                return nil
+            end
+            chunkValue = chunkValue * DL.BASE + value
         end
 
-        -- Pad with leading zeros to reach desired bit length
-        bits = string.rep("0", bitLength - #bits) .. bits
+        -- Convert the chunk value to binary bits
+        local chunkBits = ""
+        while chunkValue > 0 do
+            chunkBits = (chunkValue % 2 == 1 and "1" or "0") .. chunkBits
+            chunkValue = math.floor(chunkValue / 2)
+        end
+
+        -- Pad to the expected bit length for this chunk (about 12-13 bits for 2 chars)
+        local expectedChunkBits = math.min(math.ceil(chunkSize * math.log(DL.BASE, 2)), bitLength - #bitString)
+        chunkBits = string.rep("0", expectedChunkBits - #chunkBits) .. chunkBits
+
+        -- Add to overall bitstring, ensuring we don't exceed the total requested bit length
+        if #bitString + #chunkBits <= bitLength then
+            bitString = bitString .. chunkBits
+        else
+            -- Only add the bits we need to reach bitLength
+            local remaining = bitLength - #bitString
+            bitString = bitString .. chunkBits:sub(#chunkBits - remaining + 1)
+            break
+        end
     end
 
     -- Ensure we have exactly the right length
-    if #bits ~= bitLength then
-        -- If there's a mismatch in length, adjust by either truncating or padding
-        if #bits > bitLength then
-            -- If too long, take the rightmost bits (least significant)
-            bits = bits:sub(#bits - bitLength + 1)
-        else
-            -- If too short, pad with leading zeros
-            bits = string.rep("0", bitLength - #bits) .. bits
-        end
+    if #bitString < bitLength then
+        -- If too short after all chunks, pad with leading zeros
+        -- (this shouldn't happen with proper encoding)
+        d("Warning: Bit string too short after decoding all chunks. Padding with leading zeros.")
+        bitString = string.rep("0", bitLength - #bitString) .. bitString
+    elseif #bitString > bitLength then
+        -- If too long (due to padding rules), take the rightmost bits
+        d("Warning: Bit string too long after decoding. Truncating.")
+        bitString = bitString:sub(#bitString - bitLength + 1)
     end
 
-    return bits
+    d("Final bit string length: " .. #bitString .. " (expected " .. bitLength .. ")")
+
+    -- Debug first 40 chars of resulting bit string
+    if bitLength > 40 then
+        d("Resulting bit string (first 40 chars): " .. bitString:sub(1, 40) .. "...")
+    else
+        d("Resulting bit string: " .. bitString)
+    end
+
+    return bitString
 end
 
 -------------------------------------------------
 -- High-Level API Functions
 -------------------------------------------------
 
---- Enhanced encoding function that handles large numbers better
+--- Encodes data according to bit lengths
 --- @param data integer[] Table of numbers to encode
 --- @param bitLengths integer[] Table of bit lengths for each number
---- @return string|nil The encoded string, or nil if encoding failed
+--- @return string|nil The encoded string, or nil on error
 function DL.encode(data, bitLengths)
     -- Check if we're dealing with gear data or other large data
     local isGearData = #data > 50 or #bitLengths > 50
@@ -570,10 +661,10 @@ function DL.encode(data, bitLengths)
     end
 end
 
---- Enhanced decoding function that handles large numbers better
+--- Decodes a string according to bit lengths
 --- @param str string The string to decode
 --- @param bitLengths integer[] Table of bit lengths for each number
---- @return integer[]|nil Table of decoded numbers, or nil if decoding failed
+--- @return integer[]|nil Table of unpacked numbers, or nil on error
 function DL.decode(str, bitLengths)
     -- Check total bit length to determine the best decoding approach
     local totalBits = 0
@@ -586,13 +677,13 @@ function DL.decode(str, bitLengths)
         end
     end
 
-    -- If we have a very large total bit length or any individual large bit lengths,
-    -- use the direct decoding method as it's more reliable for large datasets
-    if totalBits > 500 or hasLargeBitLengths or #bitLengths > 50 then
+    -- For smaller datasets (like in SimpleGearTest), force bit-based decoding
+    -- Only use direct decoding for genuinely large datasets
+    if totalBits > 1000 or hasLargeBitLengths or #bitLengths > 100 or str:sub(1, 1) == "E" then
         d("Using direct decoding due to large data set: " .. totalBits .. " total bits, " .. #bitLengths .. " values")
         return DL.decodeLargeNumbers(str, bitLengths)
     else
-        -- For smaller datasets, try bit-based decoding first
+        -- For smaller datasets, use bit-based decoding
         d("Using bit-based decoding for smaller data set")
 
         -- Convert the encoded string to binary bits
@@ -617,6 +708,10 @@ function DL.decode(str, bitLengths)
             end
         end
 
+        -- For debugging, print the bit string
+        d("Bit string for decoding (first 30 chars): " .. bitString:sub(1, 30) ..
+            (totalBits > 30 and "..." or ""))
+
         -- Unpack the binary bits into the values
         local result = DL.unpackBits(bitString, bitLengths)
 
@@ -636,7 +731,7 @@ end
 
 --- Calculates the minimum number of bits needed to represent a value.
 --- @param maxValue integer The maximum value to represent
---- @return integer @The number of bits required
+--- @return integer The number of bits required
 function DL.bitsRequired(maxValue)
     if maxValue <= 0 then return 1 end
     return math.ceil(math.log(maxValue + 1) / math.log(2))
@@ -647,14 +742,15 @@ end
 --- @field maxValue integer The maximum value this field can have
 --- @field type string|nil The field type ("number", "table") - defaults to "number"
 --- @field schema SchemaField[]|nil The nested schema for table fields
+--- @field count integer|nil The count for table/array fields
 
 --- @class Schema
 --- @field encode fun(data: table): string|nil Encode data according to the schema
 --- @field decode fun(str: string): table|nil Decode a string according to the schema
 
---- Create a schema for common data types to simplify encoding.
---- @param schema SchemaField[] Array of schema field definitions
---- @return Schema @The schema object with encode and decode methods
+--- Creates a schema for encoding/decoding structured data
+--- @param schema SchemaField[] Schema definition for encoding/decoding
+--- @return Schema Schema object with encode and decode methods
 function DL.createSchema(schema)
     local bitLengths = {}
     local isComplexSchema = false
@@ -927,6 +1023,153 @@ function DL.createSchema(schema)
 end
 
 -------------------------------------------------
+-- Schema
+-------------------------------------------------
+
+local EMPTY = 0
+local NUMERIC = 1
+local TABLE = 2
+local ARRAY = 3
+
+--- @class Field
+--- @field __index Field
+--- @field name string The field name
+--- @field fieldType integer The field type (EMPTY, NUMERIC, TABLE, ARRAY)
+Field = {}
+Field.__index = Field
+
+--- Creates a new Field object
+--- @param name string The field name
+--- @param fieldType integer The field type
+--- @return Field @The new Field object
+function Field:New(name, fieldType)
+    --- @class (partial) Field
+    local o = setmetatable({}, Field)
+
+    o.name = name
+    o.fieldType = fieldType
+
+    return o
+end
+
+-- ----------------------------------------------------------------------------
+
+--- @class Numeric : Field
+--- @field __index Numeric
+--- @field bitLength integer The bit length for the numeric field
+Numeric = setmetatable({}, { __index = Field })
+Numeric.__index = Numeric
+
+--- Creates a new Numeric field
+--- @param name string The field name
+--- @param bitLength integer The bit length for the numeric field
+--- @return Numeric @The new Numeric field
+function Numeric:New(name, bitLength)
+    --- @class (partial) Numeric
+    local o = setmetatable(Field:New(name, NUMERIC), Numeric)
+
+    o.bitLength = bitLength
+
+    return o
+end
+
+--- Handles a numeric value
+--- @param data number The numeric data to handle
+--- @return string|nil The binary string representation, or nil on error
+function Numeric:Handle(data)
+    if not assert(type(data) == "number", "Value must be a number.") then
+        return
+    end
+
+    local result = decimalToBinaryString(data, self.bitLength)
+
+    if #result > self.bitLength then
+        error("Value is outside of upper bound")
+    end
+
+    return result
+end
+
+-- ----------------------------------------------------------------------------
+
+--- @class Array : Field
+--- @field __index Array
+--- @field length integer The array length
+--- @field subType Field The field type for array elements
+Array = setmetatable({}, { __index = Field })
+Array.__index = Array
+
+--- Creates a new Array field
+--- @param name string The field name
+--- @param length integer The array length
+--- @param subtype Field The field type for array elements
+--- @return Array The new Array field
+function Array:New(name, length, subtype)
+    --- @class (partial) Array
+    local o = setmetatable(Field:New(name, ARRAY), Array)
+
+    o.length = length
+    o.subType = subtype
+
+    return o
+end
+
+--- Handles an array of values
+--- @param data table The array data to handle
+--- @return string|nil The binary string representation, or nil on error
+function Array:Handle(data)
+    local result = ""
+
+    if not assert(type(data) == "table", "Value must be a table.") then
+        return
+    end
+
+    for _, datum in ipairs(data) do
+        result = result .. self.subType:Handle(datum)
+    end
+
+    return result
+end
+
+-- ----------------------------------------------------------------------------
+
+--- @class Table : Field
+--- @field __index Table
+--- @field fields Field[] The fields contained in the table
+Table = setmetatable({}, { __index = Table })
+Table.__index = Table
+
+--- Creates a new Table field
+--- @param name string The field name
+--- @param fields Field[] The fields contained in the table
+--- @return Table @The new Table field
+function Table:New(name, fields)
+    --- @class (partial) Table
+    local o = setmetatable(Field:New(name, TABLE), Table)
+
+    o.fields = fields
+
+    return o
+end
+
+--- Handles a table of values
+--- @param data table The table data to handle
+--- @return string|nil @The binary string representation, or nil on error
+function Table:Handle(data)
+    local result = ""
+
+    if not assert(type(data) == "table", "Value must be a table.") then
+        return
+    end
+
+    for i, field in ipairs(self.fields) do
+        result = result .. field:Handle(data[i])
+    end
+
+    return result
+end
+
+-------------------------------------------------
 -- Test Functions
 -------------------------------------------------
 
@@ -972,7 +1215,8 @@ function DL.test()
     d("DataLink tests passed!")
 end
 
--- Add a new example function to demonstrate table of tables encoding
+--- Creates a gear schema example for demonstration purposes
+--- @return table Schema object with encode and decode methods
 function DL.createGearSchema()
     -- Add debugging output
     local schema =
@@ -992,8 +1236,39 @@ function DL.createGearSchema()
     }
 
     d("Creating gear schema...")
+    d(schema)
 
     return DL.createSchema(schema)
+end
+
+--- Alternative version of createGearSchema using the Field classes
+--- @return string @The encoded string
+function DL.createGearSchema_v2()
+    local gearPiece = Table:New("gearPiece",
+        {
+            Numeric:New("id", 16),
+            Numeric:New("glyph", 8),
+            Numeric:New("param1", 12),
+            Numeric:New("param2", 12),
+        })
+
+    -- it can be rewritten in nested format, but I like to separate this kind of things for clarity
+    local build = Array:New("build", 2, gearPiece)
+
+    -- after it, schema (build) can be used to encode data
+
+    local testBuild =
+    {
+        { 15535, 100, 1000, 1000 },
+        { 25535, 200, 2000, 2000 },
+    }
+
+    local encodedString = build:Handle(testBuild)
+
+    d("Encoded string: ")
+    d(encodedString)
+
+    return encodedString
 end
 
 -- Return the library as a global

@@ -77,7 +77,7 @@ else
     
     -- Iterate through decoded values and reconstruct items
     for i = 1, itemCount do
-        local baseIdx = 1 + (i-1) * 4 + 1  -- Skip count + 4 values per item
+        local baseIdx = 2 + (i-1) * 4  -- Skip count + correct offset for each item
         local item = {
             id = decoded[baseIdx],
             glyph = decoded[baseIdx + 1],
